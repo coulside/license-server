@@ -10,7 +10,7 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 DB = "licenses.db"
-ADMIN_PASSWORD = "777"
+ADMIN_PASSWORD = "admin777"
 TG_URL = "https://t.me/your_support_channel"
 
 # -------------------- DATABASE --------------------
@@ -28,20 +28,17 @@ def init_db():
         """)
         conn.commit()
 
-
 def get_license_by_hwid(hwid):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
         cur.execute("SELECT key, days_left, banned, active FROM licenses WHERE hwid=?", (hwid,))
         return cur.fetchone()
 
-
 def get_license_by_key(key):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
         cur.execute("SELECT key, hwid, days_left, banned, active FROM licenses WHERE key=?", (key,))
         return cur.fetchone()
-
 
 def update_license(key, days=None, active=None, banned=None):
     with sqlite3.connect(DB) as conn:
@@ -54,27 +51,26 @@ def update_license(key, days=None, active=None, banned=None):
             cur.execute("UPDATE licenses SET banned=? WHERE key=?", (banned, key))
         conn.commit()
 
-
 def log_action(action, key=None, hwid=None, days=None):
     with open("actions.log", "a", encoding="utf-8") as f:
         f.write(f"{datetime.now()} | {action} | key={key} | hwid={hwid} | days={days}\n")
-
 
 # -------------------- AUTH DECORATOR --------------------
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
+            # Если это JSON-запрос, возвращаем JSON ошибку
+            if request.is_json or request.path.startswith("/all") or request.path.startswith("/activate") or request.path.startswith("/ban"):
+                return jsonify({"status":"error","message":"Не авторизован"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
-
 
 # -------------------- ROUTES --------------------
 @app.route("/")
 def home():
     return "Server is alive!"
-
 
 # -------------------- LOGIN --------------------
 @app.route("/login", methods=["GET", "POST"])
@@ -109,13 +105,11 @@ def login():
             error = "Неверный пароль"
     return render_template_string(LOGIN_HTML, error=error)
 
-
 @app.route("/logout")
 @login_required
 def logout():
     session.clear()
     return redirect("/login")
-
 
 # -------------------- LICENSE API --------------------
 @app.route("/register", methods=["POST"])
@@ -138,7 +132,6 @@ def register_hwid():
     log_action("register", key=new_key, hwid=hwid)
     return jsonify({"status": "registered", "key": new_key})
 
-
 @app.route("/check", methods=["POST"])
 def check_license():
     data = request.json
@@ -160,7 +153,6 @@ def check_license():
 
     return jsonify({"status": "ok", "days_left": days_left})
 
-
 @app.route("/activate", methods=["POST"])
 @login_required
 def activate_license():
@@ -173,7 +165,6 @@ def activate_license():
     update_license(key, days=days, active=1)
     log_action("activate", key=key, days=days)
     return jsonify({"status": "ok"})
-
 
 @app.route("/add_days", methods=["POST"])
 @login_required
@@ -196,7 +187,6 @@ def add_days():
     log_action("add_days", key=key, days=add)
     return jsonify({"status": "ok", "days_left": days_left + add})
 
-
 @app.route("/ban", methods=["POST"])
 @login_required
 def ban():
@@ -209,7 +199,6 @@ def ban():
     log_action("ban", key=key)
     return jsonify({"status": "banned"})
 
-
 @app.route("/all")
 @login_required
 def all_keys():
@@ -219,7 +208,6 @@ def all_keys():
         data = cur.fetchall()
     formatted = [{"key": k, "hwid": h, "days_left": d, "banned": b, "active": a} for (k, h, d, b, a) in data]
     return jsonify(formatted)
-
 
 # -------------------- ADMIN PANEL --------------------
 ADMIN_HTML = """
@@ -240,7 +228,6 @@ ADMIN_HTML = """
 
 <div id="message" style="margin-bottom:10px;"></div>
 
-<!-- Добавление новой лицензии -->
 <div class="mb-3">
     <input type="text" id="new_hwid" class="form-control mb-2" placeholder="Введите HWID">
     <button class="btn btn-primary" onclick="add_license()">Добавить лицензию</button>
@@ -271,10 +258,12 @@ function showMessage(msg, type="info") {
     setTimeout(()=>div.innerHTML="", 3000);
 }
 
-// Загрузка всех лицензий
 function load_all() {
     fetch('/all', { credentials: 'same-origin' })
-    .then(r => r.json())
+    .then(r => {
+        if(!r.ok) throw new Error("Не авторизован или ошибка сервера");
+        return r.json();
+    })
     .then(data => {
         const tbody = document.getElementById("licenses_body");
         tbody.innerHTML = "";
@@ -309,7 +298,6 @@ function load_all() {
     .catch(e => showMessage("Ошибка при загрузке лицензий: " + e.message, "danger"));
 }
 
-// Добавление новой лицензии
 function add_license() {
     const hwid = document.getElementById("new_hwid").value.trim();
     if(!hwid) { showMessage("Введите HWID", "warning"); return; }
@@ -333,7 +321,6 @@ function add_license() {
     .catch(e => showMessage("Ошибка при добавлении лицензии", "danger"));
 }
 
-// Активировать лицензию
 function activate(key) {
     const daysInput = document.getElementById(`days_${key}`);
     const days = Number(daysInput.value);
@@ -354,7 +341,6 @@ function activate(key) {
     .catch(e=>showMessage("Ошибка при активации","danger"));
 }
 
-// Забанить лицензию
 function ban(key) {
     fetch('/ban',{
         method:'POST',
@@ -381,9 +367,8 @@ function ban(key) {
 def admin():
     return render_template_string(ADMIN_HTML)
 
-
 # -------------------- START SERVER --------------------
 if __name__ == "__main__":
     init_db()
-    # Render сам управляет сервером, достаточно указать host и port
+    # Render сам управляет сервером, достаточно host и port
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
