@@ -10,15 +10,18 @@ from flask import Flask, request, jsonify, session, redirect, url_for, render_te
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Путь к базе данных (Windows -> рядом с файлом, Linux -> /tmp)
+# Путь к базе данных (Windows -> рядом с файлом, Linux -> постоянное место)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB = os.path.join(BASE_DIR, "licenses.db") if os.name == "nt" else "/tmp/licenses.db"
+
+# Используем постоянное место хранения вместо /tmp
+DEFAULT_DB = os.path.join(BASE_DIR, "licenses.db")
 DB = os.environ.get("DB_PATH", DEFAULT_DB)
+
 ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
 
-# Гарантируем, что директория для БД существует (актуально для Render)
-db_dir = os.path.dirname(DB) or BASE_DIR
+# Гарантируем, что директория для БД существует
+db_dir = os.path.dirname(DB)
 os.makedirs(db_dir, exist_ok=True)
 
 # -------------------- DATABASE --------------------
