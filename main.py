@@ -226,11 +226,152 @@ ADMIN_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>License Server Admin</title>
+    <title>TRINITY CODERS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .inactive { background-color: lightyellow; }
+        .banned { background-color: pink; }
+        .active { background-color: lightgreen; }
+    </style>
 </head>
 <body>
-<h2>Admin Panel</h2>
-<p>Панель администрирования работает.</p>
+<div class="container mt-4">
+<h2>TRINITY CODERS</h2>
+
+<div id="message" style="margin-bottom:10px;"></div>
+
+<!-- Добавление новой лицензии -->
+<div class="mb-3">
+    <input type="text" id="new_hwid" class="form-control mb-2" placeholder="Введите HWID">
+    <button class="btn btn-primary" onclick="add_license()">Добавить лицензию</button>
+</div>
+
+<table class="table table-striped">
+<thead>
+<tr>
+<th>Key</th>
+<th>HWID</th>
+<th>Days Left</th>
+<th>Status</th>
+<th>Действия</th>
+</tr>
+</thead>
+<tbody id="licenses_body"></tbody>
+</table>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    load_all();
+});
+
+function showMessage(msg, type="info") {
+    const div = document.getElementById("message");
+    div.innerHTML = msg;
+    div.className = "alert alert-" + type;
+    setTimeout(()=>div.innerHTML="", 3000);
+}
+
+// Загрузка всех лицензий
+function load_all() {
+    fetch('/all', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(data => {
+        const tbody = document.getElementById("licenses_body");
+        tbody.innerHTML = "";
+        if(!data || data.length === 0) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = '<td colspan="5" class="text-center">Лицензий нет</td>';
+            tbody.appendChild(tr);
+            return;
+        }
+        data.forEach(l => {
+            const tr = document.createElement("tr");
+            if(l.banned) tr.className = "banned";
+            else if(!l.active) tr.className = "inactive";
+            else tr.className = "active";
+
+            const statusText = l.banned ? "Забанена" : (l.active ? "Активна" : "Неактивна");
+
+            tr.innerHTML = `
+                <td>${l.key}</td>
+                <td>${l.hwid || ""}</td>
+                <td>${l.days_left}</td>
+                <td>${statusText}</td>
+                <td>
+                    <input type="number" min="1" placeholder="Days" style="width:60px;" id="days_${l.key}">
+                    <button class="btn btn-success btn-sm" onclick="activate('${l.key}')">Активировать</button>
+                    <button class="btn btn-danger btn-sm" onclick="ban('${l.key}')">Забанить</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    })
+    .catch(e => showMessage("Ошибка при загрузке лицензий: " + e.message, "danger"));
+}
+
+// Добавление новой лицензии
+function add_license() {
+    const hwid = document.getElementById("new_hwid").value.trim();
+    if(!hwid) { showMessage("Введите HWID", "warning"); return; }
+
+    fetch('/register', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({hwid: hwid})
+    })
+    .then(r => r.json())
+    .then(d => {
+        if(d.status === "registered") {
+            showMessage("Лицензия добавлена: " + d.key, "success");
+            document.getElementById("new_hwid").value = "";
+        } else {
+            showMessage(JSON.stringify(d), "danger");
+        }
+        load_all();
+    })
+    .catch(e => showMessage("Ошибка при добавлении лицензии", "danger"));
+}
+
+// Активировать лицензию
+function activate(key) {
+    const daysInput = document.getElementById(`days_${key}`);
+    const days = Number(daysInput.value);
+    if (!days || days <= 0) { showMessage("Введите корректное количество дней", "warning"); return; }
+
+    fetch('/activate', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({key: key, days: days})
+    })
+    .then(r => r.json())
+    .then(d => {
+        if(d.status=="ok") showMessage("Лицензия активирована","success");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при активации","danger"));
+}
+
+// Забанить лицензию
+function ban(key) {
+    fetch('/ban',{
+        method:'POST',
+        credentials:'same-origin',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:key})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="banned") showMessage("Лицензия забанена","warning");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при бане","danger"));
+}
+</script>
+</div>
 </body>
 </html>
 """
