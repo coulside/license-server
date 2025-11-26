@@ -14,6 +14,9 @@ DB = "/tmp/licenses.db"  # Обновите путь к базе данных
 ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
 
+# Гарантируем, что директория для БД существует (актуально для Render)
+os.makedirs(os.path.dirname(DB), exist_ok=True)
+
 # -------------------- DATABASE --------------------
 def init_db():
     print(f"Путь к базе данных: {DB}")  # Логируем путь к базе данных
@@ -32,6 +35,11 @@ def init_db():
         )
         """)
         conn.commit()
+    print("Инициализация базы данных завершена.")
+
+
+# Инициализируем базу сразу при импорте модуля (важно для gunicorn/Render)
+init_db()
 
 def check_table_exists():
     """Проверка существования таблицы 'licenses' в базе данных"""
