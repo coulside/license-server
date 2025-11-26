@@ -9,12 +9,15 @@ from flask import Flask, request, jsonify, session, redirect, url_for, render_te
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-DB = "licenses.db"
-ADMIN_PASSWORD = "admin777"
+# База будет храниться в рабочей директории Render
+DB = os.path.join(os.path.dirname(__file__), "licenses.db")
+ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
 
 # -------------------- DATABASE --------------------
 def init_db():
+    if not os.access(os.path.dirname(DB), os.W_OK):
+        print("Ошибка: нет прав на запись в директорию базы данных!")
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
         cur.execute("""
@@ -52,7 +55,7 @@ def update_license(key, days=None, active=None, banned=None):
         conn.commit()
 
 def log_action(action, key=None, hwid=None, days=None):
-    with open("actions.log", "a", encoding="utf-8") as f:
+    with open(os.path.join(os.path.dirname(__file__), "actions.log"), "a", encoding="utf-8") as f:
         f.write(f"{datetime.now()} | {action} | key={key} | hwid={hwid} | days={days}\n")
 
 # -------------------- AUTH DECORATOR --------------------
@@ -60,9 +63,6 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
-            # Если это JSON-запрос, возвращаем JSON ошибку
-            if request.is_json or request.path.startswith("/all") or request.path.startswith("/activate") or request.path.startswith("/ban"):
-                return jsonify({"status":"error","message":"Не авторизован"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -79,7 +79,7 @@ def login():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Login</title>
+        <title>Admin Login</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     </head>
     <body class="bg-light">
@@ -225,7 +225,6 @@ ADMIN_HTML = """
 <body>
 <div class="container mt-4">
 <h2>TRINITY CODERS</h2>
-
 <div id="message" style="margin-bottom:10px;"></div>
 
 <div class="mb-3">
@@ -247,9 +246,7 @@ ADMIN_HTML = """
 </table>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    load_all();
-});
+document.addEventListener("DOMContentLoaded", load_all);
 
 function showMessage(msg, type="info") {
     const div = document.getElementById("message");
@@ -260,17 +257,12 @@ function showMessage(msg, type="info") {
 
 function load_all() {
     fetch('/all', { credentials: 'same-origin' })
-    .then(r => {
-        if(!r.ok) throw new Error("Не авторизован или ошибка сервера");
-        return r.json();
-    })
+    .then(r => r.json())
     .then(data => {
         const tbody = document.getElementById("licenses_body");
         tbody.innerHTML = "";
         if(!data || data.length === 0) {
-            const tr = document.createElement("tr");
-            tr.innerHTML = '<td colspan="5" class="text-center">Лицензий нет</td>';
-            tbody.appendChild(tr);
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Лицензий нет</td></tr>';
             return;
         }
         data.forEach(l => {
@@ -280,7 +272,6 @@ function load_all() {
             else tr.className = "active";
 
             const statusText = l.banned ? "Забанена" : (l.active ? "Активна" : "Неактивна");
-
             tr.innerHTML = `
                 <td>${l.key}</td>
                 <td>${l.hwid || ""}</td>
@@ -334,8 +325,7 @@ function activate(key) {
     })
     .then(r => r.json())
     .then(d => {
-        if(d.status=="ok") showMessage("Лицензия активирована","success");
-        else showMessage(JSON.stringify(d),"danger");
+        showMessage(d.status=="ok" ? "Лицензия активирована":"Ошибка", d.status=="ok"?"success":"danger");
         load_all();
     })
     .catch(e=>showMessage("Ошибка при активации","danger"));
@@ -350,8 +340,7 @@ function ban(key) {
     })
     .then(r=>r.json())
     .then(d=>{
-        if(d.status=="banned") showMessage("Лицензия забанена","warning");
-        else showMessage(JSON.stringify(d),"danger");
+        showMessage(d.status=="banned"?"Лицензия забанена":"Ошибка", d.status=="banned"?"warning":"danger");
         load_all();
     })
     .catch(e=>showMessage("Ошибка при бане","danger"));
@@ -370,5 +359,6 @@ def admin():
 # -------------------- START SERVER --------------------
 if __name__ == "__main__":
     init_db()
-    # Render сам управляет сервером, достаточно host и port
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    # Render сам управляет сервером
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
