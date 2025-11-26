@@ -277,6 +277,12 @@ ADMIN_HTML = """
 <!-- Уведомления -->
 <div id="message" style="margin-bottom:10px;"></div>
 
+<!-- Регистрация HWID -->
+<div class="mb-3">
+    <input id="reg_hwid" placeholder="HWID" class="form-control mb-2">
+    <button class="btn btn-secondary" onclick="registerHWID()">Зарегистрировать HWID</button>
+</div>
+
 <!-- Активировать лицензию -->
 <div class="mb-3">
     <input id="act_key" placeholder="Key" class="form-control mb-2">
@@ -367,6 +373,26 @@ function ban() {
     .catch(e=>showMessage("Ошибка при бане","danger"));
 }
 
+function registerHWID() {
+    fetch('/register', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({hwid: reg_hwid.value.trim()})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="registered"){
+            showMessage("HWID зарегистрирован. Key: " + d.key, "success");
+            act_key.value = d.key;
+            load_all();
+        } else {
+            showMessage(JSON.stringify(d),"warning");
+        }
+    })
+    .catch(e=>showMessage("Ошибка при регистрации HWID","danger"));
+}
+
 // Загружаем таблицу сразу при открытии панели
 window.onload = load_all;
 </script>
@@ -384,4 +410,3 @@ if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
- 
