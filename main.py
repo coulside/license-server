@@ -63,7 +63,6 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
-            # Если AJAX-запрос, вернуть JSON
             if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
                 return jsonify({"status": "error", "message": "Не авторизован"}), 401
             return redirect(url_for("login"))
@@ -122,18 +121,21 @@ def register_hwid():
     if not hwid:
         return jsonify({"status": "error", "message": "Missing hwid"}), 400
 
-    with sqlite3.connect(DB) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT hwid FROM licenses WHERE hwid=?", (hwid,))
-        if cur.fetchone():
-            return jsonify({"status": "exists", "message": "HWID уже зарегистрирован"}), 200
+    try:
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT hwid FROM licenses WHERE hwid=?", (hwid,))
+            if cur.fetchone():
+                return jsonify({"status": "exists", "message": "HWID уже зарегистрирован"}), 200
 
-        new_key = str(uuid.uuid4()).replace("-", "").upper()[:20]
-        cur.execute("INSERT INTO licenses (key, hwid, active) VALUES (?, ?, 0)", (new_key, hwid))
-        conn.commit()
+            new_key = str(uuid.uuid4()).replace("-", "").upper()[:20]
+            cur.execute("INSERT INTO licenses (key, hwid, active) VALUES (?, ?, 0)", (new_key, hwid))
+            conn.commit()
 
-    log_action("register", key=new_key, hwid=hwid)
-    return jsonify({"status": "registered", "key": new_key})
+        log_action("register", key=new_key, hwid=hwid)
+        return jsonify({"status": "registered", "key": new_key})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при добавлении лицензии: {str(e)}"}), 500
 
 @app.route("/check", methods=["POST"])
 def check_license():
@@ -165,9 +167,12 @@ def activate_license():
     if not key or days is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
 
-    update_license(key, days=days, active=1)
-    log_action("activate", key=key, days=days)
-    return jsonify({"status": "ok"})
+    try:
+        update_license(key, days=days, active=1)
+        log_action("activate", key=key, days=days)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при активации лицензии: {str(e)}"}), 500
 
 @app.route("/add_days", methods=["POST"])
 @login_required
@@ -178,17 +183,20 @@ def add_days():
     if not key or add is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
 
-    lic = get_license_by_key(key)
-    if not lic:
-        return jsonify({"status": "invalid"}), 200
+    try:
+        lic = get_license_by_key(key)
+        if not lic:
+            return jsonify({"status": "invalid"}), 200
 
-    _, _, days_left, banned, active = lic
-    if banned:
-        return jsonify({"status": "banned"}), 200
+        _, _, days_left, banned, active = lic
+        if banned:
+            return jsonify({"status": "banned"}), 200
 
-    update_license(key, days=days_left + add)
-    log_action("add_days", key=key, days=add)
-    return jsonify({"status": "ok", "days_left": days_left + add})
+        update_license(key, days=days_left + add)
+        log_action("add_days", key=key, days=add)
+        return jsonify({"status": "ok", "days_left": days_left + add})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при добавлении дней: {str(e)}"}), 500
 
 @app.route("/ban", methods=["POST"])
 @login_required
@@ -198,19 +206,25 @@ def ban():
     if not key:
         return jsonify({"status": "error", "message": "Missing key"}), 400
 
-    update_license(key, banned=1)
-    log_action("ban", key=key)
-    return jsonify({"status": "banned"})
+    try:
+        update_license(key, banned=1)
+        log_action("ban", key=key)
+        return jsonify({"status": "banned"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при бане: {str(e)}"}), 500
 
 @app.route("/all")
 @login_required
 def all_keys():
-    with sqlite3.connect(DB) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT key, hwid, days_left, banned, active FROM licenses")
-        data = cur.fetchall()
-    formatted = [{"key": k, "hwid": h, "days_left": d, "banned": b, "active": a} for (k, h, d, b, a) in data]
-    return jsonify(formatted)
+    try:
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT key, hwid, days_left, banned, active FROM licenses")
+            data = cur.fetchall()
+        formatted = [{"key": k, "hwid": h, "days_left": d, "banned": b, "active": a} for (k, h, d, b, a) in data]
+        return jsonify(formatted)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при загрузке лицензий: {str(e)}"}), 500
 
 # -------------------- ADMIN PANEL --------------------
 ADMIN_HTML = """
