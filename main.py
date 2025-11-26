@@ -82,13 +82,18 @@ def login_required(f):
     return decorated
 
 # -------------------- ROUTES --------------------
-@app.before_first_request
 def check_db():
-    """Проверяем таблицу перед первым запросом"""
+    """Проверка наличия таблицы при старте приложения"""
     if not check_table_exists():
         print("Таблица 'licenses' не найдена!")
     else:
         print("Таблица 'licenses' существует.")
+
+# Flask 3.1 удалил before_first_request, поэтому регистрируем безопасно
+if hasattr(app, "before_serving"):
+    app.before_serving(check_db)
+else:
+    check_db()
 
 @app.route("/")
 def home():
