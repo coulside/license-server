@@ -345,8 +345,8 @@ ADMIN_HTML = """
     <title>TRINITY CODERS</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body>
-<div class="container mt-4">
+<body style="background-color: #1f1f1f; display: flex; justify-content: center; align-items: center; min-height: 100vh;">
+<div style="background-color: #2b2b2b; padding: 20px; border-radius: 10px; width: 90%; max-width: 1200px; color: white;">
 <h2>TRINITY CODERS</h2>
 
 <!-- Уведомления -->
@@ -354,14 +354,14 @@ ADMIN_HTML = """
 
 <!-- Активировать лицензию -->
 <div class="mb-3">
-    <input id="act_key" placeholder="Key" class="form-control mb-2">
-    <input id="act_days" type="number" placeholder="Days" class="form-control mb-2">
-    <button class="btn btn-success" onclick="activate()">Активировать</button>
+    <input id="act_key" placeholder="Key" class="form-control mb-2 bg-dark text-light">
+    <input id="act_days" type="number" placeholder="Days" class="form-control mb-2 bg-dark text-light">
+    <button class="btn btn-outline-light" onclick="activate()">Активировать</button>
 </div>
 
 <!-- Бан / разбан -->
 <div class="mb-3">
-    <input id="ban_key" placeholder="Key" class="form-control mb-2">
+    <input id="ban_key" placeholder="Key" class="form-control mb-2 bg-dark text-light">
     <div class="d-flex gap-2">
         <button class="btn btn-danger" onclick="ban()">Забанить</button>
         <button class="btn btn-secondary" onclick="unban()">Разбанить</button>
@@ -373,7 +373,7 @@ ADMIN_HTML = """
     <button class="btn btn-info" onclick="load_all()">Показать все лицензии</button>
 </div>
 
-<table class="table table-striped">
+<table class="table table-dark table-striped">
 <thead>
 <tr>
 <th>Key</th>
@@ -390,7 +390,7 @@ ADMIN_HTML = """
 function showMessage(msg, type="info") {
     const div = document.getElementById("message");
     div.innerHTML = msg;
-    div.className = "alert alert-" + type;
+    div.className = "alert alert-" + type + " text-light";
     setTimeout(()=>div.innerHTML="", 3000);
 }
 
