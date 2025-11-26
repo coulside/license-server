@@ -10,7 +10,7 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 DB = "licenses.db"
-ADMIN_PASSWORD = "12345"
+ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
 
 # -------------------- DATABASE --------------------
