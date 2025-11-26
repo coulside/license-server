@@ -176,7 +176,8 @@ def check_license():
     if days_left <= 0:
         return jsonify({"status": "expired"}), 200
 
-    return jsonify({"status": "ok", "days_left": days_left})
+	return jsonify({"status": "ok", "days_left": days_left + add})
+
 
 @app.route("/activate", methods=["POST"])
 @login_required
