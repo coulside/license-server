@@ -270,6 +270,23 @@ def ban():
     return jsonify({"status": "banned"})
 
 
+@app.route("/unban", methods=["POST"])
+@login_required
+def unban():
+    data = request.json
+    key = data.get("key")
+    if not key:
+        return jsonify({"status": "error", "message": "Missing key"}), 400
+
+    lic = get_license_by_key(key)
+    if not lic:
+        return jsonify({"status": "invalid"}), 200
+
+    update_license(key, banned=0)
+    log_action("unban", key=key)
+    return jsonify({"status": "ok"})
+
+
 @app.route("/all")
 @login_required
 def all_keys():
@@ -289,11 +306,130 @@ ADMIN_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>License Server Admin</title>
+    <title>TRINITY CODERS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
-<h2>Admin Panel</h2>
-<p>Панель администрирования работает.</p>
+<div class="container mt-4">
+<h2>TRINITY CODERS</h2>
+
+<!-- Уведомления -->
+<div id="message" style="margin-bottom:10px;"></div>
+
+<!-- Активировать лицензию -->
+<div class="mb-3">
+    <input id="act_key" placeholder="Key" class="form-control mb-2">
+    <input id="act_days" type="number" placeholder="Days" class="form-control mb-2">
+    <button class="btn btn-success" onclick="activate()">Активировать</button>
+</div>
+
+<!-- Бан / разбан -->
+<div class="mb-3">
+    <input id="ban_key" placeholder="Key" class="form-control mb-2">
+    <div class="d-flex gap-2">
+        <button class="btn btn-danger" onclick="ban()">Забанить</button>
+        <button class="btn btn-secondary" onclick="unban()">Разбанить</button>
+    </div>
+</div>
+
+<!-- Все лицензии -->
+<div class="mb-3">
+    <button class="btn btn-info" onclick="load_all()">Показать все лицензии</button>
+</div>
+
+<table class="table table-striped">
+<thead>
+<tr>
+<th>Key</th>
+<th>HWID</th>
+<th>Days Left</th>
+<th>Active</th>
+<th>Banned</th>
+</tr>
+</thead>
+<tbody id="licenses_body"></tbody>
+</table>
+
+<script>
+function showMessage(msg, type="info") {
+    const div = document.getElementById("message");
+    div.innerHTML = msg;
+    div.className = "alert alert-" + type;
+    setTimeout(()=>div.innerHTML="", 3000);
+}
+
+function load_all() {
+    fetch('/all', { credentials: 'include' }) // обязательно включаем cookie
+    .then(r => {
+        if (!r.ok) throw new Error("Сервер вернул ошибку");
+        return r.json();
+    })
+    .then(data => {
+        const tbody = document.getElementById("licenses_body");
+        tbody.innerHTML = "";
+        data.forEach(l => {
+            const tr = document.createElement("tr");
+            if(l.banned) tr.style.backgroundColor = "pink";
+            else if(!l.active) tr.style.backgroundColor = "lightyellow";
+            tr.innerHTML = `<td>${l.key}</td><td>${l.hwid}</td><td>${l.days_left}</td><td>${l.active}</td><td>${l.banned}</td>`;
+            tbody.appendChild(tr);
+        });
+    })
+    .catch(e => showMessage("Ошибка при загрузке лицензий: " + e.message, "danger"));
+}
+
+function activate() {
+    fetch('/activate', {
+        method: 'POST',
+        credentials: 'include',  // вот это
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({key: act_key.value, days: Number(act_days.value)})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="ok") showMessage("Лицензия активирована","success");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при активации","danger"));
+}
+
+function ban() {
+    fetch('/ban',{
+        method:'POST',
+        credentials: 'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:ban_key.value})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="banned") showMessage("Лицензия забанена","warning");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при бане","danger"));
+}
+
+function unban() {
+    fetch('/unban',{
+        method:'POST',
+        credentials: 'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:ban_key.value})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="ok") showMessage("Лицензия разбанена","success");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при разбане","danger"));
+}
+
+// Загружаем таблицу сразу при открытии панели
+window.onload = load_all;
+</script>
+</div>
 </body>
 </html>
 """
