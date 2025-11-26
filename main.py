@@ -9,17 +9,19 @@ from flask import Flask, request, jsonify, session, redirect, url_for, render_te
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# База хранится в рабочей директории Render
-DB = os.path.join(os.path.dirname(__file__), "licenses.db")
+# База хранится в рабочей директории Render (используем временный каталог для базы данных)
+DB = "/tmp/licenses.db"  # Обновите путь к базе данных
 ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
 
 # -------------------- DATABASE --------------------
 def init_db():
+    print(f"Путь к базе данных: {DB}")  # Логируем путь к базе данных
     if not os.access(os.path.dirname(DB), os.W_OK):
         print("Ошибка: нет прав на запись в директорию базы данных!")
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
+        # Создаем таблицу, если она не существует
         cur.execute("""
         CREATE TABLE IF NOT EXISTS licenses (
             key TEXT PRIMARY KEY,
@@ -31,6 +33,16 @@ def init_db():
         """)
         conn.commit()
 
+def check_table_exists():
+    """Проверка существования таблицы 'licenses' в базе данных"""
+    with sqlite3.connect(DB) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT name FROM sqlite_master WHERE type='table' AND name='licenses';
+        """)
+        return cur.fetchone() is not None
+
+# -------------------- LICENSES --------------------
 def get_license_by_hwid(hwid):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
@@ -70,6 +82,15 @@ def login_required(f):
     return decorated
 
 # -------------------- ROUTES --------------------
+
+@app.before_first_request
+def check_db():
+    """Проверяем таблицу перед первым запросом"""
+    if not check_table_exists():
+        print("Таблица 'licenses' не найдена!")
+    else:
+        print("Таблица 'licenses' существует.")
+
 @app.route("/")
 def home():
     return "Server is alive!"
