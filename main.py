@@ -4,22 +4,31 @@ import uuid
 import time
 from functools import wraps
 from datetime import datetime
-from threading import Thread
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string
-import requests
 
 # -------------------- FLASK APP --------------------
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-DB = "licenses.db"
-ADMIN_PASSWORD = "12345"
+# Путь к базе данных (Windows -> рядом с файлом, Linux -> /tmp)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB = os.path.join(BASE_DIR, "licenses.db") if os.name == "nt" else "/tmp/licenses.db"
+DB = os.environ.get("DB_PATH", DEFAULT_DB)
+ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
+
+# Гарантируем, что директория для БД существует (актуально для Render)
+db_dir = os.path.dirname(DB) or BASE_DIR
+os.makedirs(db_dir, exist_ok=True)
 
 # -------------------- DATABASE --------------------
 def init_db():
+    print(f"Путь к базе данных: {DB}")  # Логируем путь к базе данных
+    if not os.access(os.path.dirname(DB), os.W_OK):
+        print("Ошибка: нет прав на запись в директорию базы данных!")
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
+        # Создаем таблицу, если она не существует
         cur.execute("""
         CREATE TABLE IF NOT EXISTS licenses (
             key TEXT PRIMARY KEY,
@@ -30,15 +39,29 @@ def init_db():
             last_tick INTEGER
         )
         """)
-        # на случай старой БД без last_tick – пытаемся добавить колонку
+        # на случай уже существующей таблицы без last_tick – пытаемся добавить колонку
         try:
             cur.execute("ALTER TABLE licenses ADD COLUMN last_tick INTEGER")
         except sqlite3.OperationalError:
             # колонка уже есть
             pass
         conn.commit()
+    print("Инициализация базы данных завершена.")
 
 
+# Инициализируем базу сразу при импорте модуля (важно для gunicorn/Render)
+init_db()
+
+def check_table_exists():
+    """Проверка существования таблицы 'licenses' в базе данных"""
+    with sqlite3.connect(DB) as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT name FROM sqlite_master WHERE type='table' AND name='licenses';
+        """)
+        return cur.fetchone() is not None
+
+# -------------------- LICENSES --------------------
 def get_license_by_hwid(hwid):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
@@ -48,7 +71,6 @@ def get_license_by_hwid(hwid):
         )
         return cur.fetchone()
 
-
 def get_license_by_key(key):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
@@ -57,7 +79,6 @@ def get_license_by_key(key):
             (key,),
         )
         return cur.fetchone()
-
 
 def update_license(key, days=None, active=None, banned=None, last_tick=None):
     with sqlite3.connect(DB) as conn:
@@ -109,27 +130,38 @@ def sync_license_days(lic):
     update_license(key, days=days_left, active=active, last_tick=new_last_tick)
     return (key, days_left, banned, active, new_last_tick)
 
-
 def log_action(action, key=None, hwid=None, days=None):
-    with open("actions.log", "a", encoding="utf-8") as f:
+    with open(os.path.join(os.path.dirname(__file__), "actions.log"), "a", encoding="utf-8") as f:
         f.write(f"{datetime.now()} | {action} | key={key} | hwid={hwid} | days={days}\n")
-
 
 # -------------------- AUTH DECORATOR --------------------
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
+            if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"status": "error", "message": "Не авторизован"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
 
-
 # -------------------- ROUTES --------------------
+def check_db():
+    """Проверка наличия таблицы при старте приложения"""
+    if not check_table_exists():
+        print("Таблица 'licenses' не найдена!")
+    else:
+        print("Таблица 'licenses' существует.")
+
+# Flask 3.1 удалил before_first_request, поэтому регистрируем безопасно
+if hasattr(app, "before_serving"):
+    app.before_serving(check_db)
+else:
+    check_db()
+
 @app.route("/")
 def home():
     return "Server is alive!"
-
 
 # -------------------- LOGIN --------------------
 @app.route("/login", methods=["GET", "POST"])
@@ -138,7 +170,7 @@ def login():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Login</title>
+        <title>Admin Login</title>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     </head>
     <body class="bg-light">
@@ -164,13 +196,11 @@ def login():
             error = "Неверный пароль"
     return render_template_string(LOGIN_HTML, error=error)
 
-
 @app.route("/logout")
 @login_required
 def logout():
     session.clear()
     return redirect("/login")
-
 
 # -------------------- LICENSE API --------------------
 @app.route("/register", methods=["POST"])
@@ -180,19 +210,21 @@ def register_hwid():
     if not hwid:
         return jsonify({"status": "error", "message": "Missing hwid"}), 400
 
-    with sqlite3.connect(DB) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT hwid FROM licenses WHERE hwid=?", (hwid,))
-        if cur.fetchone():
-            return jsonify({"status": "exists", "message": "HWID уже зарегистрирован"}), 200
+    try:
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT hwid FROM licenses WHERE hwid=?", (hwid,))
+            if cur.fetchone():
+                return jsonify({"status": "exists", "message": "HWID уже зарегистрирован"}), 200
 
-        new_key = str(uuid.uuid4()).replace("-", "").upper()[:20]
-        cur.execute("INSERT INTO licenses (key, hwid, active) VALUES (?, ?, 0)", (new_key, hwid))
-        conn.commit()
+            new_key = str(uuid.uuid4()).replace("-", "").upper()[:20]
+            cur.execute("INSERT INTO licenses (key, hwid, active) VALUES (?, ?, 0)", (new_key, hwid))
+            conn.commit()
 
-    log_action("register", key=new_key, hwid=hwid)
-    return jsonify({"status": "registered", "key": new_key})
-
+        log_action("register", key=new_key, hwid=hwid)
+        return jsonify({"status": "registered", "key": new_key})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при добавлении лицензии: {str(e)}"}), 500
 
 @app.route("/check", methods=["POST"])
 def check_license():
@@ -217,7 +249,6 @@ def check_license():
 
     return jsonify({"status": "ok", "days_left": days_left})
 
-
 @app.route("/activate", methods=["POST"])
 @login_required
 def activate_license():
@@ -227,12 +258,12 @@ def activate_license():
     if not key or days is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
 
-    # при активации ставим счётчик дней и текущий момент как точку отсчёта
-    now = int(time.time())
-    update_license(key, days=days, active=1, banned=0, last_tick=now)
-    log_action("activate", key=key, days=days)
-    return jsonify({"status": "ok", "days_left": days})
-
+    try:
+        update_license(key, days=days, active=1)
+        log_action("activate", key=key, days=days)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при активации лицензии: {str(e)}"}), 500
 
 @app.route("/add_days", methods=["POST"])
 @login_required
@@ -243,19 +274,20 @@ def add_days():
     if not key or add is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
 
-    lic = get_license_by_key(key)
-    if not lic:
-        return jsonify({"status": "invalid"}), 200
-    _, _, days_left, banned, active, last_tick = sync_license_days(lic)
-    if banned:
-        return jsonify({"status": "banned"}), 200
+    try:
+        lic = get_license_by_key(key)
+        if not lic:
+            return jsonify({"status": "invalid"}), 200
 
-    new_days = days_left + add
-    # обновляем дни и, если нужно, точку отсчёта (оставляем прежний last_tick, чтобы сутки считались от первой активации)
-    update_license(key, days=new_days)
-    log_action("add_days", key=key, days=add)
-    return jsonify({"status": "ok", "days_left": new_days})
+        _, _, days_left, banned, active, _last_tick = sync_license_days(lic)
+        if banned:
+            return jsonify({"status": "banned"}), 200
 
+        update_license(key, days=days_left + add)
+        log_action("add_days", key=key, days=add)
+        return jsonify({"status": "ok", "days_left": days_left + add})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при добавлении дней: {str(e)}"}), 500
 
 @app.route("/ban", methods=["POST"])
 @login_required
@@ -265,9 +297,12 @@ def ban():
     if not key:
         return jsonify({"status": "error", "message": "Missing key"}), 400
 
-    update_license(key, banned=1)
-    log_action("ban", key=key)
-    return jsonify({"status": "banned"})
+    try:
+        update_license(key, banned=1)
+        log_action("ban", key=key)
+        return jsonify({"status": "banned"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при бане: {str(e)}"}), 500
 
 
 @app.route("/unban", methods=["POST"])
@@ -278,28 +313,29 @@ def unban():
     if not key:
         return jsonify({"status": "error", "message": "Missing key"}), 400
 
-    lic = get_license_by_key(key)
-    if not lic:
-        return jsonify({"status": "invalid"}), 200
+    try:
+        lic = get_license_by_key(key)
+        if not lic:
+            return jsonify({"status": "invalid"}), 200
 
-    update_license(key, banned=0)
-    log_action("unban", key=key)
-    return jsonify({"status": "ok"})
-
+        update_license(key, banned=0)
+        log_action("unban", key=key)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при разбане: {str(e)}"}), 500
 
 @app.route("/all")
 @login_required
 def all_keys():
-    with sqlite3.connect(DB) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT key, hwid, days_left, banned, active, last_tick FROM licenses")
-        data = cur.fetchall()
-    formatted = [
-        {"key": k, "hwid": h, "days_left": d, "banned": b, "active": a, "last_tick": lt}
-        for (k, h, d, b, a, lt) in data
-    ]
-    return jsonify(formatted)
-
+    try:
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT key, hwid, days_left, banned, active FROM licenses")
+            data = cur.fetchall()
+        formatted = [{"key": k, "hwid": h, "days_left": d, "banned": b, "active": a} for (k, h, d, b, a) in data]
+        return jsonify(formatted)
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при загрузке лицензий: {str(e)}"}), 500
 
 # -------------------- ADMIN PANEL --------------------
 ADMIN_HTML = """
@@ -433,34 +469,13 @@ window.onload = load_all;
 </body>
 </html>
 """
-
 @app.route("/admin")
 @login_required
 def admin():
     return render_template_string(ADMIN_HTML)
 
-
-# -------------------- KEEP ALIVE --------------------
-def keep_alive():
-    """Запускает Flask на отдельном потоке и пингует сам себя каждые 60 секунд"""
-    def run():
-        app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
-
-    def ping():
-        url = "https://a7329ec6-0b42-4112-ad29-f47c6e2dbdea-00-3fg25xrpcyiwx.picard.replit.dev"
-        while True:
-            try:
-                requests.get(url)
-                print(f"Pinged {url}")
-            except Exception as e:
-                print("Ping failed:", e)
-            time.sleep(60)
-
-    Thread(target=run).start()
-    Thread(target=ping).start()
-
-
 # -------------------- START SERVER --------------------
 if __name__ == "__main__":
     init_db()
-    keep_alive()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
