@@ -9,7 +9,7 @@ from flask import Flask, request, jsonify, session, redirect, url_for, render_te
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# База будет храниться в рабочей директории Render
+# База хранится в рабочей директории Render
 DB = os.path.join(os.path.dirname(__file__), "licenses.db")
 ADMIN_PASSWORD = "777"
 TG_URL = "https://t.me/your_support_channel"
@@ -63,6 +63,9 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
+            # Если AJAX-запрос, вернуть JSON
+            if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return jsonify({"status": "error", "message": "Не авторизован"}), 401
             return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
@@ -256,9 +259,10 @@ function showMessage(msg, type="info") {
 }
 
 function load_all() {
-    fetch('/all', { credentials: 'same-origin' })
+    fetch('/all', { credentials: 'include' })
     .then(r => r.json())
     .then(data => {
+        if(data.status === "error"){ showMessage(data.message,"danger"); return; }
         const tbody = document.getElementById("licenses_body");
         tbody.innerHTML = "";
         if(!data || data.length === 0) {
@@ -270,7 +274,6 @@ function load_all() {
             if(l.banned) tr.className = "banned";
             else if(!l.active) tr.className = "inactive";
             else tr.className = "active";
-
             const statusText = l.banned ? "Забанена" : (l.active ? "Активна" : "Неактивна");
             tr.innerHTML = `
                 <td>${l.key}</td>
@@ -292,57 +295,44 @@ function load_all() {
 function add_license() {
     const hwid = document.getElementById("new_hwid").value.trim();
     if(!hwid) { showMessage("Введите HWID", "warning"); return; }
-
     fetch('/register', {
         method: 'POST',
-        credentials: 'same-origin',
+        credentials: 'include',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({hwid: hwid})
     })
     .then(r => r.json())
     .then(d => {
-        if(d.status === "registered") {
-            showMessage("Лицензия добавлена: " + d.key, "success");
-            document.getElementById("new_hwid").value = "";
-        } else {
-            showMessage(JSON.stringify(d), "danger");
-        }
+        if(d.status === "registered") showMessage("Лицензия добавлена: " + d.key, "success");
+        else showMessage(JSON.stringify(d),"danger");
         load_all();
     })
-    .catch(e => showMessage("Ошибка при добавлении лицензии", "danger"));
+    .catch(e => showMessage("Ошибка при добавлении лицензии","danger"));
 }
 
-function activate(key) {
-    const daysInput = document.getElementById(`days_${key}`);
-    const days = Number(daysInput.value);
-    if (!days || days <= 0) { showMessage("Введите корректное количество дней", "warning"); return; }
-
-    fetch('/activate', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({key: key, days: days})
+function activate(key){
+    const days = Number(document.getElementById(`days_${key}`).value);
+    if(!days || days<=0){ showMessage("Введите корректное количество дней","warning"); return; }
+    fetch('/activate',{
+        method:'POST',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({key:key, days:days})
     })
-    .then(r => r.json())
-    .then(d => {
-        showMessage(d.status=="ok" ? "Лицензия активирована":"Ошибка", d.status=="ok"?"success":"danger");
-        load_all();
-    })
+    .then(r=>r.json())
+    .then(d=>{ showMessage(d.status=="ok"?"Лицензия активирована":"Ошибка", d.status=="ok"?"success":"danger"); load_all(); })
     .catch(e=>showMessage("Ошибка при активации","danger"));
 }
 
-function ban(key) {
+function ban(key){
     fetch('/ban',{
         method:'POST',
-        credentials:'same-origin',
+        credentials:'include',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({key:key})
     })
     .then(r=>r.json())
-    .then(d=>{
-        showMessage(d.status=="banned"?"Лицензия забанена":"Ошибка", d.status=="banned"?"warning":"danger");
-        load_all();
-    })
+    .then(d=>{ showMessage(d.status=="banned"?"Лицензия забанена":"Ошибка", d.status=="banned"?"warning":"danger"); load_all(); })
     .catch(e=>showMessage("Ошибка при бане","danger"));
 }
 </script>
@@ -359,6 +349,5 @@ def admin():
 # -------------------- START SERVER --------------------
 if __name__ == "__main__":
     init_db()
-    # Render сам управляет сервером
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
