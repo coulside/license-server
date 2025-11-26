@@ -83,7 +83,7 @@ def login_required(f):
 
 # -------------------- ROUTES --------------------
 @app.before_first_request
-def before_first_request():
+def check_db():
     """Проверяем таблицу перед первым запросом"""
     if not check_table_exists():
         print("Таблица 'licenses' не найдена!")
@@ -231,7 +231,7 @@ def ban():
         log_action("ban", key=key)
         return jsonify({"status": "banned"})
     except Exception as e:
-                return jsonify({"status": "error", "message": f"Ошибка при бане: {str(e)}"}), 500
+        return jsonify({"status": "error", "message": f"Ошибка при бане: {str(e)}"}), 500
 
 @app.route("/all")
 @login_required
@@ -358,7 +358,6 @@ window.onload = load_all;
 </body>
 </html>
 """
-
 @app.route("/admin")
 @login_required
 def admin():
@@ -369,5 +368,3 @@ if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-       
