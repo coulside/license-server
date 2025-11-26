@@ -214,44 +214,6 @@ def add_days():
 
         update_license(key, days=days_left + add)
         log_action("add_days", key=key, days=add)
-        return jsonify({"status": "ok", "days_left": days_left
-
-@app.route("/activate", methods=["POST"])
-@login_required
-def activate_license():
-    data = request.json
-    key = data.get("key")
-    days = data.get("days")
-    if not key or days is None:
-        return jsonify({"status": "error", "message": "Missing key or days"}), 400
-
-    try:
-        update_license(key, days=days, active=1)
-        log_action("activate", key=key, days=days)
-        return jsonify({"status": "ok"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": f"Ошибка при активации лицензии: {str(e)}"}), 500
-
-@app.route("/add_days", methods=["POST"])
-@login_required
-def add_days():
-    data = request.json
-    key = data.get("key")
-    add = data.get("days")
-    if not key or add is None:
-        return jsonify({"status": "error", "message": "Missing key or days"}), 400
-
-    try:
-        lic = get_license_by_key(key)
-        if not lic:
-            return jsonify({"status": "invalid"}), 200
-
-        _, _, days_left, banned, active = lic
-        if banned:
-            return jsonify({"status": "banned"}), 200
-
-        update_license(key, days=days_left + add)
-        log_action("add_days", key=key, days=add)
         return jsonify({"status": "ok", "days_left": days_left + add})
     except Exception as e:
         return jsonify({"status": "error", "message": f"Ошибка при добавлении дней: {str(e)}"}), 500
