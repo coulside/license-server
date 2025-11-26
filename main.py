@@ -1,12 +1,9 @@
 import os
 import sqlite3
 import uuid
-import time
 from functools import wraps
 from datetime import datetime
-from threading import Thread
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string
-import requests
 
 # -------------------- FLASK APP --------------------
 app = Flask(__name__)
@@ -244,27 +241,8 @@ def admin():
     return render_template_string(ADMIN_HTML)
 
 
-# -------------------- KEEP ALIVE --------------------
-def keep_alive():
-    """Запускает Flask на отдельном потоке и пингует сам себя каждые 60 секунд"""
-    def run():
-        app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
-
-    def ping():
-        url = "https://a7329ec6-0b42-4112-ad29-f47c6e2dbdea-00-3fg25xrpcyiwx.picard.replit.dev"
-        while True:
-            try:
-                requests.get(url)
-                print(f"Pinged {url}")
-            except Exception as e:
-                print("Ping failed:", e)
-            time.sleep(60)
-
-    Thread(target=run).start()
-    Thread(target=ping).start()
-
-
 # -------------------- START SERVER --------------------
 if __name__ == "__main__":
     init_db()
-    keep_alive()
+    # Render сам управляет сервером, достаточно указать host и port
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
