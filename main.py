@@ -233,20 +233,30 @@ ADMIN_HTML = """
 <head>
     <title>TRINITY CODERS</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .inactive { background-color: lightyellow; }
-        .banned { background-color: pink; }
-        .active { background-color: lightgreen; }
-    </style>
 </head>
 <body>
 <div class="container mt-4">
 <h2>TRINITY CODERS</h2>
+
+<!-- Уведомления -->
 <div id="message" style="margin-bottom:10px;"></div>
 
+<!-- Активировать лицензию -->
 <div class="mb-3">
-    <input type="text" id="new_hwid" class="form-control mb-2" placeholder="Введите HWID">
-    <button class="btn btn-primary" onclick="add_license()">Добавить лицензию</button>
+    <input id="act_key" placeholder="Key" class="form-control mb-2">
+    <input id="act_days" type="number" placeholder="Days" class="form-control mb-2">
+    <button class="btn btn-success" onclick="activate()">Активировать</button>
+</div>
+
+<!-- Бан -->
+<div class="mb-3">
+    <input id="ban_key" placeholder="Key" class="form-control mb-2">
+    <button class="btn btn-danger" onclick="ban()">Забанить</button>
+</div>
+
+<!-- Все лицензии -->
+<div class="mb-3">
+    <button class="btn btn-info" onclick="load_all()">Показать все лицензии</button>
 </div>
 
 <table class="table table-striped">
@@ -255,16 +265,14 @@ ADMIN_HTML = """
 <th>Key</th>
 <th>HWID</th>
 <th>Days Left</th>
-<th>Status</th>
-<th>Действия</th>
+<th>Active</th>
+<th>Banned</th>
 </tr>
 </thead>
 <tbody id="licenses_body"></tbody>
 </table>
 
 <script>
-document.addEventListener("DOMContentLoaded", load_all);
-
 function showMessage(msg, type="info") {
     const div = document.getElementById("message");
     div.innerHTML = msg;
@@ -273,88 +281,63 @@ function showMessage(msg, type="info") {
 }
 
 function load_all() {
-    fetch('/all', { credentials: 'include' })
-    .then(r => r.json())
+    fetch('/all', { credentials: 'include' }) // обязательно включаем cookie
+    .then(r => {
+        if (!r.ok) throw new Error("Сервер вернул ошибку");
+        return r.json();
+    })
     .then(data => {
-        if(data.status === "error"){ showMessage(data.message,"danger"); return; }
         const tbody = document.getElementById("licenses_body");
         tbody.innerHTML = "";
-        if(!data || data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center">Лицензий нет</td></tr>';
-            return;
-        }
         data.forEach(l => {
             const tr = document.createElement("tr");
-            if(l.banned) tr.className = "banned";
-            else if(!l.active) tr.className = "inactive";
-            else tr.className = "active";
-            const statusText = l.banned ? "Забанена" : (l.active ? "Активна" : "Неактивна");
-            tr.innerHTML = `
-                <td>${l.key}</td>
-                <td>${l.hwid || ""}</td>
-                <td>${l.days_left}</td>
-                <td>${statusText}</td>
-                <td>
-                    <input type="number" min="1" placeholder="Days" style="width:60px;" id="days_${l.key}">
-                    <button class="btn btn-success btn-sm" onclick="activate('${l.key}')">Активировать</button>
-                    <button class="btn btn-danger btn-sm" onclick="ban('${l.key}')">Забанить</button>
-                </td>
-            `;
+            if(l.banned) tr.style.backgroundColor = "pink";
+            else if(!l.active) tr.style.backgroundColor = "lightyellow";
+            tr.innerHTML = `<td>${l.key}</td><td>${l.hwid}</td><td>${l.days_left}</td><td>${l.active}</td><td>${l.banned}</td>`;
             tbody.appendChild(tr);
         });
     })
     .catch(e => showMessage("Ошибка при загрузке лицензий: " + e.message, "danger"));
 }
 
-function add_license() {
-    const hwid = document.getElementById("new_hwid").value.trim();
-    if(!hwid) { showMessage("Введите HWID", "warning"); return; }
-    fetch('/register', {
+function activate() {
+    fetch('/activate', {
         method: 'POST',
-        credentials: 'include',
+        credentials: 'include',  // вот это
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({hwid: hwid})
+        body: JSON.stringify({key: act_key.value, days: Number(act_days.value)})
     })
-    .then(r => r.json())
-    .then(d => {
-        if(d.status === "registered") showMessage("Лицензия добавлена: " + d.key, "success");
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="ok") showMessage("Лицензия активирована","success");
         else showMessage(JSON.stringify(d),"danger");
         load_all();
     })
-    .catch(e => showMessage("Ошибка при добавлении лицензии","danger"));
-}
-
-function activate(key){
-    const days = Number(document.getElementById(`days_${key}`).value);
-    if(!days || days<=0){ showMessage("Введите корректное количество дней","warning"); return; }
-    fetch('/activate',{
-        method:'POST',
-        credentials:'include',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({key:key, days:days})
-    })
-    .then(r=>r.json())
-    .then(d=>{ showMessage(d.status=="ok"?"Лицензия активирована":"Ошибка", d.status=="ok"?"success":"danger"); load_all(); })
     .catch(e=>showMessage("Ошибка при активации","danger"));
 }
 
-function ban(key){
+function ban() {
     fetch('/ban',{
         method:'POST',
-        credentials:'include',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({key:key})
+        body:JSON.stringify({key:ban_key.value})
     })
     .then(r=>r.json())
-    .then(d=>{ showMessage(d.status=="banned"?"Лицензия забанена":"Ошибка", d.status=="banned"?"warning":"danger"); load_all(); })
+    .then(d=>{
+        if(d.status=="banned") showMessage("Лицензия забанена","warning");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
     .catch(e=>showMessage("Ошибка при бане","danger"));
 }
+
+// Загружаем таблицу сразу при открытии панели
+window.onload = load_all;
 </script>
 </div>
 </body>
 </html>
 """
-
 @app.route("/admin")
 @login_required
 def admin():
