@@ -10,28 +10,18 @@ from flask import Flask, request, jsonify, session, redirect, url_for, render_te
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Путь к базе данных (Windows -> рядом с файлом, Linux -> постоянное место)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Используем постоянное место хранения вместо /tmp
 DEFAULT_DB = os.path.join(BASE_DIR, "licenses.db")
 DB = os.environ.get("DB_PATH", DEFAULT_DB)
 
 ADMIN_PASSWORD = "777"
-TG_URL = "https://t.me/your_support_channel"
-
-# Гарантируем, что директория для БД существует
-db_dir = os.path.dirname(DB)
-os.makedirs(db_dir, exist_ok=True)
 
 # -------------------- DATABASE --------------------
 def init_db():
-    print(f"Путь к базе данных: {DB}")  # Логируем путь к базе данных
-    if not os.access(os.path.dirname(DB), os.W_OK):
-        print("Ошибка: нет прав на запись в директорию базы данных!")
+    print(f"Путь к базе данных: {DB}")
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
-        # Создаем таблицу, если она не существует
         cur.execute("""
         CREATE TABLE IF NOT EXISTS licenses (
             key TEXT PRIMARY KEY,
@@ -42,29 +32,15 @@ def init_db():
             last_tick INTEGER
         )
         """)
-        # на случай уже существующей таблицы без last_tick – пытаемся добавить колонку
         try:
             cur.execute("ALTER TABLE licenses ADD COLUMN last_tick INTEGER")
         except sqlite3.OperationalError:
-            # колонка уже есть
             pass
         conn.commit()
-    print("Инициализация базы данных завершена.")
+    print("База данных инициализирована.")
 
-
-# Инициализируем базу сразу при импорте модуля (важно для gunicorn/Render)
 init_db()
 
-def check_table_exists():
-    """Проверка существования таблицы 'licenses' в базе данных"""
-    with sqlite3.connect(DB) as conn:
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT name FROM sqlite_master WHERE type='table' AND name='licenses';
-        """)
-        return cur.fetchone() is not None
-
-# -------------------- LICENSES --------------------
 def get_license_by_hwid(hwid):
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
@@ -96,40 +72,25 @@ def update_license(key, days=None, active=None, banned=None, last_tick=None):
             cur.execute("UPDATE licenses SET last_tick=? WHERE key=?", (last_tick, key))
         conn.commit()
 
-
 def sync_license_days(lic):
-    """
-    При каждом обращении к серверу уменьшает days_left,
-    исходя из прошедших полных суток с момента last_tick.
-    Возвращает обновлённый кортеж (key, days_left, banned, active, last_tick).
-    """
     if not lic:
         return None
-
     key, days_left, banned, active, last_tick = lic
-
-    # если ключ не активен или забанен – дни не списываем
     if not active or banned:
         return lic
-
     now = int(time.time())
-
     if last_tick is None:
-        # первый запуск – просто запоминаем текущий момент
         update_license(key, last_tick=now)
         return (key, days_left, banned, active, now)
-
     elapsed_days = (now - last_tick) // 86400
     if elapsed_days <= 0:
         return lic
-
     days_left = max(0, days_left - elapsed_days)
     if days_left <= 0:
         active = 0
         new_last_tick = None
     else:
         new_last_tick = now
-
     update_license(key, days=days_left, active=active, last_tick=new_last_tick)
     return (key, days_left, banned, active, new_last_tick)
 
@@ -149,24 +110,10 @@ def login_required(f):
     return decorated
 
 # -------------------- ROUTES --------------------
-def check_db():
-    """Проверка наличия таблицы при старте приложения"""
-    if not check_table_exists():
-        print("Таблица 'licenses' не найдена!")
-    else:
-        print("Таблица 'licenses' существует.")
-
-# Flask 3.1 удалил before_first_request, поэтому регистрируем безопасно
-if hasattr(app, "before_serving"):
-    app.before_serving(check_db)
-else:
-    check_db()
-
 @app.route("/")
 def home():
     return "Server is alive!"
 
-# -------------------- LOGIN --------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     LOGIN_HTML = """
@@ -212,18 +159,15 @@ def register_hwid():
     hwid = data.get("hwid")
     if not hwid:
         return jsonify({"status": "error", "message": "Missing hwid"}), 400
-
     try:
         with sqlite3.connect(DB) as conn:
             cur = conn.cursor()
             cur.execute("SELECT hwid FROM licenses WHERE hwid=?", (hwid,))
             if cur.fetchone():
                 return jsonify({"status": "exists", "message": "HWID уже зарегистрирован"}), 200
-
             new_key = str(uuid.uuid4()).replace("-", "").upper()[:20]
             cur.execute("INSERT INTO licenses (key, hwid, active) VALUES (?, ?, 0)", (new_key, hwid))
             conn.commit()
-
         log_action("register", key=new_key, hwid=hwid)
         return jsonify({"status": "registered", "key": new_key})
     except Exception as e:
@@ -235,13 +179,10 @@ def check_license():
     hwid = data.get("hwid")
     if not hwid:
         return jsonify({"status": "error", "message": "Missing hwid"}), 400
-
     lic = get_license_by_hwid(hwid)
-    # пересчитываем оставшиеся дни при каждом обращении
     lic = sync_license_days(lic)
     if not lic:
         return jsonify({"status": "unregistered"}), 200
-
     key, days_left, banned, active, _last_tick = lic
     if banned:
         return jsonify({"status": "banned"}), 200
@@ -249,7 +190,6 @@ def check_license():
         return jsonify({"status": "inactive"}), 200
     if days_left <= 0:
         return jsonify({"status": "expired"}), 200
-
     return jsonify({"status": "ok", "days_left": days_left})
 
 @app.route("/activate", methods=["POST"])
@@ -260,7 +200,6 @@ def activate_license():
     days = data.get("days")
     if not key or days is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
-
     try:
         update_license(key, days=days, active=1)
         log_action("activate", key=key, days=days)
@@ -276,16 +215,13 @@ def add_days():
     add = data.get("days")
     if not key or add is None:
         return jsonify({"status": "error", "message": "Missing key or days"}), 400
-
     try:
         lic = get_license_by_key(key)
         if not lic:
             return jsonify({"status": "invalid"}), 200
-
         _, _, days_left, banned, active, _last_tick = sync_license_days(lic)
         if banned:
             return jsonify({"status": "banned"}), 200
-
         update_license(key, days=days_left + add)
         log_action("add_days", key=key, days=add)
         return jsonify({"status": "ok", "days_left": days_left + add})
@@ -299,14 +235,12 @@ def ban():
     key = data.get("key")
     if not key:
         return jsonify({"status": "error", "message": "Missing key"}), 400
-
     try:
         update_license(key, banned=1)
         log_action("ban", key=key)
         return jsonify({"status": "banned"})
     except Exception as e:
         return jsonify({"status": "error", "message": f"Ошибка при бане: {str(e)}"}), 500
-
 
 @app.route("/unban", methods=["POST"])
 @login_required
@@ -315,12 +249,10 @@ def unban():
     key = data.get("key")
     if not key:
         return jsonify({"status": "error", "message": "Missing key"}), 400
-
     try:
         lic = get_license_by_key(key)
         if not lic:
             return jsonify({"status": "invalid"}), 200
-
         update_license(key, banned=0)
         log_action("unban", key=key)
         return jsonify({"status": "ok"})
@@ -340,6 +272,24 @@ def all_keys():
     except Exception as e:
         return jsonify({"status": "error", "message": f"Ошибка при загрузке лицензий: {str(e)}"}), 500
 
+# -------------------- DELETE LICENSE --------------------
+@app.route("/delete_license", methods=["POST"])
+@login_required
+def delete_license():
+    data = request.json
+    key = data.get("key")
+    if not key:
+        return jsonify({"status": "error", "message": "Missing key"}), 400
+    try:
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM licenses WHERE key=?", (key,))
+            conn.commit()
+        log_action("delete_license", key=key)
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка при удалении: {str(e)}"}), 500
+
 # -------------------- ADMIN PANEL --------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
@@ -351,18 +301,14 @@ ADMIN_HTML = """
 <body style="background-color: #1f1f1f; display: flex; justify-content: center; align-items: center; min-height: 100vh;">
 <div style="background-color: #2b2b2b; padding: 20px; border-radius: 10px; width: 90%; max-width: 1200px; color: white;">
 <h2>TRINITY CODERS</h2>
-
-<!-- Уведомления -->
 <div id="message" style="margin-bottom:10px;"></div>
 
-<!-- Активировать лицензию -->
 <div class="mb-3">
     <input id="act_key" placeholder="Key" class="form-control mb-2 bg-dark text-light">
     <input id="act_days" type="number" placeholder="Days" class="form-control mb-2 bg-dark text-light">
     <button class="btn btn-outline-light" onclick="activate()">Активировать</button>
 </div>
 
-<!-- Бан / разбан -->
 <div class="mb-3">
     <input id="ban_key" placeholder="Key" class="form-control mb-2 bg-dark text-light">
     <div class="d-flex gap-2">
@@ -371,7 +317,6 @@ ADMIN_HTML = """
     </div>
 </div>
 
-<!-- Все лицензии -->
 <div class="mb-3">
     <button class="btn btn-info" onclick="load_all()">Показать все лицензии</button>
 </div>
@@ -398,11 +343,8 @@ function showMessage(msg, type="info") {
 }
 
 function load_all() {
-    fetch('/all', { credentials: 'include' }) // обязательно включаем cookie
-    .then(r => {
-        if (!r.ok) throw new Error("Сервер вернул ошибку");
-        return r.json();
-    })
+    fetch('/all', { credentials: 'include' })
+    .then(r => r.json())
     .then(data => {
         const tbody = document.getElementById("licenses_body");
         tbody.innerHTML = "";
@@ -410,7 +352,13 @@ function load_all() {
             const tr = document.createElement("tr");
             if(l.banned) tr.style.backgroundColor = "pink";
             else if(!l.active) tr.style.backgroundColor = "lightyellow";
-            tr.innerHTML = `<td>${l.key}</td><td>${l.hwid}</td><td>${l.days_left}</td><td>${l.active}</td><td>${l.banned}</td>`;
+            tr.innerHTML = `
+                <td>${l.key} <button class="btn btn-sm btn-danger" onclick="deleteLicense('${l.key}')">&times;</button></td>
+                <td>${l.hwid}</td>
+                <td>${l.days_left}</td>
+                <td>${l.active}</td>
+                <td>${l.banned}</td>
+            `;
             tbody.appendChild(tr);
         });
     })
@@ -420,7 +368,7 @@ function load_all() {
 function activate() {
     fetch('/activate', {
         method: 'POST',
-        credentials: 'include',  // вот это
+        credentials: 'include',
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({key: act_key.value, days: Number(act_days.value)})
     })
@@ -436,7 +384,7 @@ function activate() {
 function ban() {
     fetch('/ban',{
         method:'POST',
-        credentials: 'include',
+        credentials:'include',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({key:ban_key.value})
     })
@@ -452,7 +400,7 @@ function ban() {
 function unban() {
     fetch('/unban',{
         method:'POST',
-        credentials: 'include',
+        credentials:'include',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({key:ban_key.value})
     })
@@ -465,13 +413,30 @@ function unban() {
     .catch(e=>showMessage("Ошибка при разбане","danger"));
 }
 
-// Загружаем таблицу сразу при открытии панели
+function deleteLicense(key) {
+    if(!confirm("Вы уверены, что хотите удалить эту лицензию?")) return;
+    fetch('/delete_license', {
+        method:'POST',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({key: key})
+    })
+    .then(r=>r.json())
+    .then(d=>{
+        if(d.status=="ok") showMessage("Лицензия удалена","success");
+        else showMessage(JSON.stringify(d),"danger");
+        load_all();
+    })
+    .catch(e=>showMessage("Ошибка при удалении","danger"));
+}
+
 window.onload = load_all;
 </script>
 </div>
 </body>
 </html>
 """
+
 @app.route("/admin")
 @login_required
 def admin():
